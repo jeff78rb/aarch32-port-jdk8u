@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1996, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -3832,6 +3832,11 @@ void AwtComponent::SetCompositionWindow(RECT& r)
         return;
     }
     COMPOSITIONFORM cf = {CFS_DEFAULT, {0, 0}, {0, 0, 0, 0}};
+    LOGFONT lf;
+    HFONT hFont = (HFONT) GetStockObject(DEFAULT_GUI_FONT);
+    if (GetObject(hFont, sizeof(lf), (LPVOID)&lf) == sizeof(lf)) {
+        ImmSetCompositionFont(hIMC, &lf);
+    }
     ImmSetCompositionWindow(hIMC, &cf);
     ImmReleaseContext(hwnd, hIMC);
 }
@@ -3862,11 +3867,11 @@ void AwtComponent::SetCandidateWindow(int iCandType, int x, int y)
     HIMC hIMC = ImmGetContext(hwnd);
     if (hIMC) {
         CANDIDATEFORM cf;
-        cf.dwStyle = CFS_POINT;
+        cf.dwStyle = CFS_CANDIDATEPOS;
         ImmGetCandidateWindow(hIMC, 0, &cf);
         if (x != cf.ptCurrentPos.x || y != cf.ptCurrentPos.y) {
             cf.dwIndex = iCandType;
-            cf.dwStyle = CFS_POINT;
+            cf.dwStyle = CFS_CANDIDATEPOS;
             cf.ptCurrentPos.x = x;
             cf.ptCurrentPos.y = y;
             cf.rcArea.left = cf.rcArea.top = cf.rcArea.right = cf.rcArea.bottom = 0;
@@ -4446,7 +4451,8 @@ void AwtComponent::DrawListItem(JNIEnv *env, DRAWITEMSTRUCT &drawInfo)
     if ((drawInfo.itemState & ODS_FOCUS)  &&
         (drawInfo.itemAction & (ODA_FOCUS | ODA_DRAWENTIRE))) {
       if (!unfocusableChoice){
-          VERIFY(::DrawFocusRect(hDC, &rect));
+          if (!::IsRectEmpty(&rect) && (::DrawFocusRect(hDC, &rect) == 0))
+              VERIFY(::GetLastError() == 0);
       }
     }
     env->DeleteLocalRef(target);

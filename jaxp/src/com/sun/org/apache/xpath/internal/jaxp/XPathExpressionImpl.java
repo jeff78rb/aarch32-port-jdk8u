@@ -1,5 +1,5 @@
  /*
-  * Copyright (c) 2017, Oracle and/or its affiliates. All rights reserved.
+  * Copyright (c) 2017, 2026, Oracle and/or its affiliates. All rights reserved.
   */
 /*
  * Copyright 1999-2004 The Apache Software Foundation.
@@ -25,6 +25,7 @@ import com.sun.org.apache.xml.internal.dtm.DTM;
 import com.sun.org.apache.xpath.internal.res.XPATHErrorResources;
 import com.sun.org.apache.xalan.internal.res.XSLMessages;
 
+import javax.xml.XMLConstants;
 import javax.xml.namespace.QName;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathConstants;
@@ -33,6 +34,7 @@ import javax.xml.xpath.XPathVariableResolver;
 
 import jdk.xml.internal.JdkXmlFeatures;
 import jdk.xml.internal.JdkXmlUtils;
+import jdk.xml.internal.XMLSecurityManager;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.traversal.NodeIterator;
@@ -60,12 +62,14 @@ public class XPathExpressionImpl  implements javax.xml.xpath.XPathExpression{
 
     boolean overrideDefaultParser;
     private final JdkXmlFeatures featureManager;
+    private final XMLSecurityManager xmlSecMgr;
 
     /** Protected constructor to prevent direct instantiation; use compile()
      * from the context.
      */
     protected XPathExpressionImpl() {
-        this(null, null, null, null, false, new JdkXmlFeatures(false));
+        this(null, null, null, null, false, new JdkXmlFeatures(true),
+            new XMLSecurityManager(true));
     };
 
     protected XPathExpressionImpl(com.sun.org.apache.xpath.internal.XPath xpath,
@@ -73,13 +77,14 @@ public class XPathExpressionImpl  implements javax.xml.xpath.XPathExpression{
             XPathFunctionResolver functionResolver,
             XPathVariableResolver variableResolver ) {
         this(xpath, prefixResolver, functionResolver, variableResolver,
-                false, new JdkXmlFeatures(false));
+                false, new JdkXmlFeatures(true),
+               new XMLSecurityManager(true));
     };
 
     protected XPathExpressionImpl(com.sun.org.apache.xpath.internal.XPath xpath,
             JAXPPrefixResolver prefixResolver,XPathFunctionResolver functionResolver,
             XPathVariableResolver variableResolver, boolean featureSecureProcessing,
-            JdkXmlFeatures featureManager) {
+            JdkXmlFeatures featureManager, XMLSecurityManager xmlSecMgr) {
         this.xpath = xpath;
         this.prefixResolver = prefixResolver;
         this.functionResolver = functionResolver;
@@ -88,6 +93,7 @@ public class XPathExpressionImpl  implements javax.xml.xpath.XPathExpression{
         this.featureManager = featureManager;
         this.overrideDefaultParser = featureManager.getFeature(
                 JdkXmlFeatures.XmlFeature.JDK_OVERRIDE_PARSER);
+        this.xmlSecMgr = xmlSecMgr;
     };
 
     public void setXPath (com.sun.org.apache.xpath.internal.XPath xpath ) {
@@ -111,6 +117,7 @@ public class XPathExpressionImpl  implements javax.xml.xpath.XPathExpression{
             xpathSupport = new com.sun.org.apache.xpath.internal.XPathContext();
         }
 
+        xpathSupport.setJdkXmlFeatures(featureManager);
         xpathSupport.setVarStack(new JAXPVariableStack(variableResolver));
         XObject xobj = null;
 
@@ -285,6 +292,10 @@ public class XPathExpressionImpl  implements javax.xml.xpath.XPathExpression{
         try {
             if ( dbf == null ) {
                 dbf = JdkXmlUtils.getDOMFactory(overrideDefaultParser);
+            }
+            if (xmlSecMgr != null && xmlSecMgr.isSecureProcessingSet()) {
+                dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING,
+                        xmlSecMgr.isSecureProcessing());
             }
             db = dbf.newDocumentBuilder();
             Document document = db.parse( source );

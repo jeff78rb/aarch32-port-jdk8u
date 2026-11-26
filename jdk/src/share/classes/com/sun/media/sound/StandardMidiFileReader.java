@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,7 @@
 package com.sun.media.sound;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.File;
@@ -145,34 +146,27 @@ public final class StandardMidiFileReader extends MidiFileReader {
 
 
     public MidiFileFormat getMidiFileFormat(URL url) throws InvalidMidiDataException, IOException {
-        InputStream urlStream = url.openStream(); // throws IOException
-        BufferedInputStream bis = new BufferedInputStream( urlStream, bisBufferSize );
-        MidiFileFormat fileFormat = null;
-        try {
-            fileFormat = getMidiFileFormat( bis ); // throws InvalidMidiDataException
-        } finally {
-            bis.close();
+        try (InputStream urlStream = url.openStream(); // throws IOException
+             BufferedInputStream bis = new BufferedInputStream(urlStream, bisBufferSize))
+        {
+            MidiFileFormat fileFormat = getMidiFileFormat(bis); // throws InvalidMidiDataException
+            return fileFormat;
         }
-        return fileFormat;
     }
 
 
     public MidiFileFormat getMidiFileFormat(File file) throws InvalidMidiDataException, IOException {
-        FileInputStream fis = new FileInputStream(file); // throws IOException
-        BufferedInputStream bis = new BufferedInputStream(fis, bisBufferSize);
-
-        // $$fb 2002-04-17: part of fix for 4635286: MidiSystem.getMidiFileFormat() returns format having invalid length
-        long length = file.length();
-        if (length > Integer.MAX_VALUE) {
-            length = MidiFileFormat.UNKNOWN_LENGTH;
+        try (FileInputStream fis = new FileInputStream(file); // throws IOException
+             BufferedInputStream bis = new BufferedInputStream(fis, bisBufferSize))
+        {
+            // $$fb 2002-04-17: part of fix for 4635286: MidiSystem.getMidiFileFormat() returns format having invalid length
+            long length = file.length();
+            if (length > Integer.MAX_VALUE) {
+                length = MidiFileFormat.UNKNOWN_LENGTH;
+            }
+            MidiFileFormat fileFormat = getMidiFileFormatFromStream(bis, (int) length, null);
+            return fileFormat;
         }
-        MidiFileFormat fileFormat = null;
-        try {
-            fileFormat = getMidiFileFormatFromStream(bis, (int) length, null);
-        } finally {
-            bis.close();
-        }
-        return fileFormat;
     }
 
 
@@ -204,28 +198,22 @@ public final class StandardMidiFileReader extends MidiFileReader {
 
 
     public Sequence getSequence(URL url) throws InvalidMidiDataException, IOException {
-        InputStream is = url.openStream();  // throws IOException
-        is = new BufferedInputStream(is, bisBufferSize);
-        Sequence seq = null;
-        try {
-            seq = getSequence(is);
-        } finally {
-            is.close();
+        try (InputStream is = url.openStream(); // throws IOException
+             BufferedInputStream bis = new BufferedInputStream(is, bisBufferSize))
+        {
+            Sequence seq = getSequence(bis);
+            return seq;
         }
-        return seq;
     }
 
 
     public Sequence getSequence(File file) throws InvalidMidiDataException, IOException {
-        InputStream is = new FileInputStream(file); // throws IOException
-        is = new BufferedInputStream(is, bisBufferSize);
-        Sequence seq = null;
-        try {
-            seq = getSequence(is);
-        } finally {
-            is.close();
+        try (InputStream is = new FileInputStream(file); // throws IOException
+             BufferedInputStream bis = new BufferedInputStream(is, bisBufferSize))
+        {
+            Sequence seq = getSequence(bis);
+            return seq;
         }
-        return seq;
     }
 }
 
@@ -241,6 +229,10 @@ final class SMFParser {
     private static final boolean STRICT_PARSER = false;
 
     private static final boolean DEBUG = false;
+
+    private static final int MAX_ALLOWED_ALLOC = 1024*1024; // Maximum allowed memory preallocation
+
+    private static final int TRACK_BUFFER_SIZE = 10*1024; // Read large tracks in 10 KB chunks
 
     int tracks;                       // number of tracks
     DataInputStream stream;   // the stream to read from
@@ -299,19 +291,45 @@ final class SMFParser {
             }
         }
         // now read track in a byte array
-        try {
-            trackData = new byte[trackLength];
-        } catch (final OutOfMemoryError oom) {
-            throw new IOException("Track length too big", oom);
-        }
-        try {
-            // $$fb 2003-08-20: fix for 4910986: MIDI file parser breaks up on http connection
-            stream.readFully(trackData);
-        } catch (EOFException eof) {
-            if (!STRICT_PARSER) {
-                return false;
+        if (trackLength <= MAX_ALLOWED_ALLOC) {
+            try {
+                trackData = new byte[trackLength];
+            } catch (final OutOfMemoryError oom) {
+                throw new IOException("Track length too big", oom);
             }
-            throw new EOFException("invalid MIDI file");
+            try {
+                // $$fb 2003-08-20: fix for 4910986: MIDI file parser breaks up on http connection
+                stream.readFully(trackData);
+            } catch (EOFException eof) {
+                if (!STRICT_PARSER) {
+                    return false;
+                }
+                throw new EOFException("invalid MIDI file");
+            }
+        } else {
+            try {
+                byte[] buffer = new byte[TRACK_BUFFER_SIZE];
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                long bytesRead = 0;
+
+                while (bytesRead < trackLength) {
+                    int bytesToRead = (int) Math.min(buffer.length, trackLength - bytesRead);
+                    try {
+                        stream.readFully(buffer, 0, bytesToRead);
+                    } catch (EOFException eof) {
+                        if (!STRICT_PARSER) {
+                            return false;
+                        }
+                        throw new EOFException("invalid MIDI file");
+                    }
+
+                    out.write(buffer, 0, bytesToRead);
+                    bytesRead += bytesToRead;
+                }
+                trackData = out.toByteArray();
+            } catch (final OutOfMemoryError oom) {
+                throw new IOException("Track length too big", oom);
+            }
         }
         pos = 0;
         return true;
